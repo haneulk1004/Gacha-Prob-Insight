@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gacha Prob Insight - 가챠 확률 인사이트</title>
+
+  <!-- Pretendard 폰트 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+
+  <style>
+    body {
+      font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui,
+        "Segoe UI", sans-serif;
+      max-width: 1100px;
+      margin: 20px auto;
+      line-height: 1.5;
+    }
+    h1, h2 {
+      margin-bottom: 0.5rem;
+    }
+    .section {
+      border: 1px solid #ccc;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+    label {
+      display: inline-block;
+      margin-right: 8px;
+      margin-bottom: 4px;
+    }
+    input[type="number"], input[type="text"], input[type="file"] {
+      padding: 4px 6px;
+      margin-right: 8px;
+      margin-bottom: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 6px 8px;
+      text-align: center;
+    }
+    th {
+      background: #f5f5f5;
+    }
+    button {
+      padding: 6px 12px;
+      margin: 4px 4px 4px 0;
+      cursor: pointer;
+    }
+    .warning {
+      color: #b34a00;
+      font-size: 0.9rem;
+    }
+    .info {
+      font-size: 0.9rem;
+      color: #555;
+    }
+    .flex-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .flex-row label {
+      margin-bottom: 0;
+    }
+  </style>
+
+  <!-- 시뮬레이션 결과 그래프용 Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body onload="initBoxes()">
+  <h1>Gacha Prob Insight (가챠 확률 인사이트)</h1>
+
+  <!-- 0. 박스 선택 / 관리 -->
+  <div class="section">
+    <h2>0. 박스 선택 / 관리</h2>
+    <div class="flex-row">
+      <label for="boxSelect">박스 선택:</label>
+      <select id="boxSelect" onchange="changeBox(this)"></select>
+      <button type="button" onclick="addBox()">박스 추가</button>
+      <button type="button" onclick="deleteCurrentBox()">현재 박스 삭제</button>
+    </div>
+    <p class="info">
+      - A박스, B박스처럼 여러 박스를 만들어 각각 다른 아이템 구성과 확률을 관리할 수 있습니다.<br>
+      - 아래 아이템 테이블은 항상 <b>현재 선택된 박스</b> 기준으로 표시됩니다.
+    </p>
+  </div>
+
+  <!-- 1. 아이템 구성 입력 -->
+  <div class="section">
+    <h2>1. 아이템 구성 입력</h2>
+    <p class="info">
+      현재 박스: <b><span id="currentBoxNameSpan"></span></b><br>
+      - 각 행에 <b>아이템 이름</b>과 <b>가중치(또는 확률)</b>를 입력하세요.<br>
+      - 가중치는 합이 1이 아니어도 됩니다. 내부에서 <b>정규화</b>하여 확률로 변환합니다.
+    </p>
+
+    <table id="itemTable">
+      <thead>
+        <tr>
+          <th>아이템 이름</th>
+          <th>가중치 / 확률</th>
+          <th>행 삭제</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><input type="text" value="아이템A" /></td>
+          <td><input type="number" step="0.0001" value="1" /></td>
+          <td><button type="button" onclick="removeRow(this)">삭제</button></td>
+        </tr>
+        <tr>
+          <td><input type="text" value="아이템B" /></td>
+          <td><input type="number" step="0.0001" value="1" /></td>
+          <td><button type="button" onclick="removeRow(this)">삭제</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" onclick="addRow()">행 추가</button>
+    <button type="button" onclick="resetCurrentBox()">현재 박스 초기화</button>
+
+    <p class="info">
+      예시) 가중치를 1, 2, 3으로 넣으면 내부적으로 전체 합 6을 기준으로
+      각각 1/6, 2/6, 3/6 확률로 계산합니다.
+    </p>
+  </div>
+
+  <!-- 2. 데이터 시트 연동 (CSV / Google Sheets) -->
+  <div class="section">
+    <h2>2. 데이터 시트 연동</h2>
+
+    <h3>2-1. CSV 파일 업로드</h3>
+    <div class="flex-row">
+      <input type="file" id="csvFileInput" accept=".csv" />
+      <button type="button" onclick="loadCsv()">CSV 불러오기 → 현재 박스에 적용</button>
+    </div>
+    <p class="info">
+      - CSV 첫 행은 헤더(열 이름)로 가정합니다.<br>
+      - 열 이름 예시: <code>name, weight</code> 또는 <code>아이템, 확률</code><br>
+      - 이름/가중치 컬럼을 자동으로 찾되, 못 찾으면 1열=이름, 2열=가중치로 처리합니다.
+    </p>
+
+    <h3>2-2. Google Sheets에서 불러오기 (공개 시트 + API Key 필요)</h3>
+    <div class="flex-row">
+      <label>시트 ID:
+        <input type="text" id="sheetIdInput" placeholder="1AbCdEFg... (URL 중간의 ID)" style="min-width: 260px;" />
+      </label>
+    </div>
+    <div class="flex-row">
+      <label>범위:
+        <input type="text" id="sheetRangeInput" value="Sheet1!A:B" />
+      </label>
+      <label>API Key:
+        <input type="text" id="sheetApiKeyInput" placeholder="Google Cloud API Key" style="min-width: 220px;" />
+      </label>
+      <button type="button" onclick="loadFromGoogleSheets()">Sheets 불러오기 → 현재 박스에 적용</button>
+    </div>
+    <p class="info">
+      - Google Sheets 문서가 <b>공개</b>되어 있어야 하고, Google Cloud에서 발급한 <b>API Key</b>가 필요합니다.<br>
+      - URL 예시: <code>https://docs.google.com/spreadsheets/d/<b>시트ID</b>/edit...</code> 에서 <b>시트ID</b> 부분만 복사해 넣으면 됩니다.<br>
+      - 범위 예시: <code>Sheet1!A:B</code> (A열=이름, B열=가중치).
+    </p>
+  </div>
+
+  <!-- 3. 뽑기 / 시뮬레이션 설정 -->
+  <div class="section">
+    <h2>3. 뽑기 / 시뮬레이션 설정</h2>
+    <div class="flex-row">
+      <label for="numDraws">뽑기 횟수 N:</label>
+      <input type="number" id="numDraws" min="1" value="10" />
+      <span class="info">(예: 한 유저가 N회 뽑기를 했을 때 기준)</span>
+    </div>
+    <div class="flex-row">
+      <label for="numTrials">시뮬레이션 횟수 M:</label>
+      <input type="number" id="numTrials" min="0" value="10000" />
+      <span class="info">
+        (0이면 시뮬레이션 생략 / 예: 10000 → N회 뽑기를 1만 번 랜덤으로 돌려서 이론값과 비교)
+      </span>
+    </div>
+  </div>
+
+  <!-- 4. 계산 버튼 -->
+  <div class="section">
+    <h2>4. 계산</h2>
+    <button type="button" onclick="calculate()">확률 계산하기 (이론 + 시뮬레이션)</button>
+    <p class="info">
+      - 가정: 매 회 뽑기마다 <b>독립적으로</b> 한 개의 아이템이 나옵니다
+      (가챠/랜덤박스에서 같은 아이템이 여러 번 나올 수 있는 구조, 복원추출).<br>
+      - N, M, 아이템 개수가 너무 크면 시뮬레이션에 시간이 오래 걸릴 수 있어 제한을 둡니다.
+    </p>
+    <p id="weightWarning" class="warning"></p>
+  </div>
+
+  <!-- 5. 결과 출력 -->
+  <div class="section">
+    <h2>5. 결과</h2>
+    <div id="resultArea" class="info">
+      아직 계산하지 않았습니다. 위에서 아이템과 N, M을 입력한 후 “확률 계산하기”를 눌러주세요.
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------
+    // 전역 상태
+    // ---------------------------
+    let boxes = {};               // { [boxName]: { name, items: [{name, weight}, ...] } }
+    let currentBoxName = "기본 박스";
+    let simChart = null;          // Chart.js 인스턴스
+
+    // ---------------------------
+    // 유틸: HTML escape
+    // ---------------------------
+    function escapeHtml(text) {
+      text = String(text);
+      const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+      };
+      return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // ---------------------------
+    // 초기 설정: 기본 박스 생성
+    // ---------------------------
+    function initBoxes() {
+      const initialItems = readItemsFromTable();
+      boxes[currentBoxName] = { name: currentBoxName, items: initialItems };
+
+      const sel = document.getElementById("boxSelect");
+      sel.innerHTML = "";
+      const opt = document.createElement("option");
+      opt.value = currentBoxName;
+      opt.textContent = currentBoxName;
+      sel.appendChild(opt);
+
+      document.getElementById("currentBoxNameSpan").textContent = currentBoxName;
+    }
+
+    // ---------------------------
+    // 테이블 ↔ 데이터 변환
+    // ---------------------------
+    function readItemsFromTable() {
+      const tbody = document.querySelector("#itemTable tbody");
+      const rows = Array.from(tbody.rows);
+      const items = [];
+
+      for (const row of rows) {
+        const name = row.cells[0].querySelector("input").value.trim();
+        const weightStr = row.cells[1].querySelector("input").value;
+        const weight = Number(weightStr);
+        if (!name) continue;
+        if (isNaN(weight) || weight <= 0) continue;
+        items.push({ name, weight });
+      }
+      return items;
+    }
+
+    function writeItemsToTable(items) {
+      const tbody = document.querySelector("#itemTable tbody");
+      tbody.innerHTML = "";
+      if (!items || items.length === 0) {
+        addRow();
+        return;
+      }
+      for (const item of items) {
+        addRow(item.name, item.weight);
+      }
+    }
+
+    function addRow(name = "", weight = "") {
+      const tbody = document.querySelector("#itemTable tbody");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input type="text" value="${escapeHtml(name)}" /></td>
+        <td><input type="number" step="0.0001" value="${weight !== "" ? String(weight) : ""}" /></td>
+        <td><button type="button" onclick="removeRow(this)">삭제</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function removeRow(button) {
+      const tbody = document.querySelector("#itemTable tbody");
+      if (tbody.rows.length <= 1) {
+        alert("최소 1개 이상의 아이템 행이 필요합니다.");
+        return;
+      }
+      const tr = button.closest("tr");
+      tbody.removeChild(tr);
+    }
+
+    function saveCurrentBoxFromTable() {
+      const items = readItemsFromTable();
+      boxes[currentBoxName] = { name: currentBoxName, items };
+    }
+
+    // ---------------------------
+    // 박스 관리
+    // ---------------------------
+    function changeBox(selectEl) {
+      saveCurrentBoxFromTable();
+      const newName = selectEl.value;
+      currentBoxName = newName;
+      document.getElementById("currentBoxNameSpan").textContent = currentBoxName;
+
+      const box = boxes[currentBoxName];
+      writeItemsToTable(box ? box.items : []);
+    }
+
+    function addBox() {
+      const name = prompt("새 박스 이름을 입력하세요:");
+      if (!name) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      if (boxes[trimmed]) {
+        alert("이미 존재하는 박스 이름입니다.");
+        return;
+      }
+
+      saveCurrentBoxFromTable();
+      boxes[trimmed] = { name: trimmed, items: [] };
+
+      const sel = document.getElementById("boxSelect");
+      const opt = document.createElement("option");
+      opt.value = trimmed;
+      opt.textContent = trimmed;
+      sel.appendChild(opt);
+
+      sel.value = trimmed;
+      currentBoxName = trimmed;
+      document.getElementById("currentBoxNameSpan").textContent = currentBoxName;
+      writeItemsToTable([]);
+    }
+
+    function deleteCurrentBox() {
+      const sel = document.getElementById("boxSelect");
+      if (sel.options.length <= 1) {
+        alert("최소 1개 이상의 박스가 필요합니다.");
+        return;
+      }
+      if (!confirm(`현재 박스 "${currentBoxName}"를 삭제하시겠습니까?`)) return;
+
+      delete boxes[currentBoxName];
+      const idx = sel.selectedIndex;
+      sel.remove(idx);
+
+      sel.selectedIndex = 0;
+      currentBoxName = sel.value;
+      document.getElementById("currentBoxNameSpan").textContent = currentBoxName;
+
+      const box = boxes[currentBoxName];
+      writeItemsToTable(box ? box.items : []);
+    }
+
+    // ---------------------------
+    // 현재 박스 초기화
+    // ---------------------------
+    function resetCurrentBox() {
+      if (!confirm(`현재 박스 "${currentBoxName}"의 아이템 구성을 초기화하시겠습니까?`)) {
+        return;
+      }
+      boxes[currentBoxName] = { name: currentBoxName, items: [] };
+      writeItemsToTable([]);
+      // 결과/경고도 초기화
+      document.getElementById("weightWarning").textContent = "";
+      document.getElementById("resultArea").innerHTML =
+        "현재 박스의 아이템 구성을 초기화했습니다. 아이템을 다시 입력하거나 CSV/Sheets에서 불러오세요.";
+      // CSV 파일 선택도 리셋
+      const csvInput = document.getElementById("csvFileInput");
+      if (csvInput) csvInput.value = "";
+      // 차트도 제거
+      if (simChart) {
+        simChart.destroy();
+        simChart = null;
+      }
+    }
+
+    // ---------------------------
+    // CSV 로드
+    // ---------------------------
+    function loadCsv() {
+      const input = document.getElementById("csvFileInput");
+      if (!input.files || input.files.length === 0) {
+        alert("CSV 파일을 선택하세요.");
+        return;
+      }
+      const file = input.files[0];
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const text = e.target.result;
+        const parsedItems = parseCsvItems(text);
+        if (!parsedItems || parsedItems.length === 0) {
+          alert("CSV에서 유효한 아이템을 찾지 못했습니다.");
+          return;
+        }
+        boxes[currentBoxName] = { name: currentBoxName, items: parsedItems };
+        writeItemsToTable(parsedItems);
+        // 결과/경고 초기화
+        document.getElementById("weightWarning").textContent = "";
+        document.getElementById("resultArea").innerHTML =
+          "CSV를 불러왔습니다. 필요하다면 테이블을 수정한 뒤 확률을 계산하세요.";
+      };
+      reader.readAsText(file, "utf-8");
+    }
+
+    function parseCsvItems(csvText) {
+      const lines = csvText
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+      if (lines.length === 0) return [];
+
+      const header = lines[0]
+        .split(",")
+        .map(h => h.trim().replace(/^"|"$/g, "").toLowerCase());
+
+      let nameIdx = header.findIndex(h => h === "name" || h === "item" || h === "아이템");
+      let weightIdx = header.findIndex(h =>
+        h === "weight" || h === "prob" || h === "probability" || h === "확률" || h === "가중치"
+      );
+
+      if (nameIdx === -1) nameIdx = 0;
+      if (weightIdx === -1) weightIdx = 1;
+
+      const items = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i]
+          .split(",")
+          .map(c => c.trim().replace(/^"|"$/g, ""));
+        if (cols.length <= Math.max(nameIdx, weightIdx)) continue;
+
+        const name = cols[nameIdx];
+        const wStr = cols[weightIdx];
+        const weight = Number(wStr);
+        if (!name) continue;
+        if (isNaN(weight) || weight <= 0) continue;
+
+        items.push({ name, weight });
+      }
+      return items;
+    }
+
+    // ---------------------------
+    // Google Sheets 로드
+    // ---------------------------
+    function loadFromGoogleSheets() {
+      const sheetId = document.getElementById("sheetIdInput").value.trim();
+      const range = document.getElementById("sheetRangeInput").value.trim();
+      const apiKey = document.getElementById("sheetApiKeyInput").value.trim();
+
+      if (!sheetId || !range || !apiKey) {
+        alert("시트 ID, 범위, API Key를 모두 입력하세요.");
+        return;
+      }
+
+      const url =
+        "https://sheets.googleapis.com/v4/spreadsheets/" +
+        encodeURIComponent(sheetId) +
+        "/values/" +
+        encodeURIComponent(range) +
+        "?key=" +
+        encodeURIComponent(apiKey);
+
+      fetch(url)
+        .then(res => {
+          if (!res.ok) {
+            throw new Error("HTTP " + res.status);
+          }
+          return res.json();
+        })
+        .then(data => {
+          if (!data.values || data.values.length === 0) {
+            alert("시트에서 데이터를 찾지 못했습니다.");
+            return;
+          }
+          const values = data.values;
+          const header = values[0].map(h => String(h).trim().toLowerCase());
+
+          let nameIdx = header.findIndex(h => h === "name" || h === "item" || h === "아이템");
+          let weightIdx = header.findIndex(h =>
+            h === "weight" || h === "prob" || h === "probability" || h === "확률" || h === "가중치"
+          );
+          if (nameIdx === -1) nameIdx = 0;
+          if (weightIdx === -1) weightIdx = 1;
+
+          const items = [];
+          for (let i = 1; i < values.length; i++) {
+            const row = values[i];
+            if (row.length <= Math.max(nameIdx, weightIdx)) continue;
+            const name = String(row[nameIdx] || "").trim();
+            const wStr = String(row[weightIdx] || "").trim();
+            const weight = Number(wStr);
+            if (!name) continue;
+            if (isNaN(weight) || weight <= 0) continue;
+            items.push({ name, weight });
+          }
+
+          if (items.length === 0) {
+            alert("시트에서 유효한 아이템을 찾지 못했습니다.");
+            return;
+          }
+
+          boxes[currentBoxName] = { name: currentBoxName, items };
+          writeItemsToTable(items);
+          // 결과/경고 초기화
+          document.getElementById("weightWarning").textContent = "";
+          document.getElementById("resultArea").innerHTML =
+            "Google Sheets에서 데이터를 불러왔습니다. 필요하다면 테이블을 수정한 뒤 확률을 계산하세요.";
+        })
+        .catch(err => {
+          console.error(err);
+          alert("Google Sheets 불러오기 중 오류가 발생했습니다: " + err.message);
+        });
+    }
+
+    // ---------------------------
+    // 확률 계산 + 시뮬레이션
+    // ---------------------------
+    function calculate() {
+      const warningEl = document.getElementById("weightWarning");
+      const resultArea = document.getElementById("resultArea");
+      warningEl.textContent = "";
+      resultArea.innerHTML = "";
+
+      // 현재 박스 상태 저장
+      saveCurrentBoxFromTable();
+
+      // N, M 읽기
+      const N = parseInt(document.getElementById("numDraws").value, 10);
+      const M = parseInt(document.getElementById("numTrials").value, 10) || 0;
+
+      if (!Number.isInteger(N) || N <= 0) {
+        alert("뽑기 횟수 N은 1 이상의 정수여야 합니다.");
+        return;
+      }
+
+      const box = boxes[currentBoxName];
+      if (!box || !box.items || box.items.length === 0) {
+        alert("현재 박스에 유효한 아이템이 없습니다.");
+        return;
+      }
+
+      const items = box.items;
+      let totalWeight = 0;
+      for (const item of items) {
+        totalWeight += item.weight;
+      }
+      if (totalWeight <= 0) {
+        alert("가중치 합이 0 이하입니다.");
+        return;
+      }
+
+      if (Math.abs(totalWeight - 1) > 1e-6) {
+        warningEl.textContent =
+          "참고: 입력된 값의 합이 1이 아닙니다. 합 = " +
+          totalWeight.toFixed(4) +
+          " (내부적으로 이 합을 기준으로 정규화하여 확률을 계산합니다.)";
+      }
+
+      // 이론값 계산
+      const stats = items.map(item => {
+        const p = item.weight / totalWeight;
+        const expectedCount = N * p;
+        const probAtLeastOne = 1 - Math.pow(1 - p, N);
+        return {
+          name: item.name,
+          weight: item.weight,
+          p,
+          expectedCountTheo: expectedCount,
+          probAtLeastOneTheo: probAtLeastOne,
+          expectedCountSim: null,
+          probAtLeastOneSim: null
+        };
+      });
+
+      // 시뮬레이션 실행 여부 결정
+      let ranSimulation = false;
+      if (Number.isInteger(M) && M > 0) {
+        const complexity = items.length * N * M;
+        if (complexity > 5e7) {
+          alert(
+            "시뮬레이션 횟수가 너무 큽니다. 아이템 수 × N × M 이 50,000,000 이하가 되도록 조정해 주세요."
+          );
+        } else {
+          runSimulation(stats, N, M);
+          ranSimulation = true;
+        }
+      }
+
+      // 결과 테이블 HTML 생성
+      let html = "";
+      html += `<p class="info">현재 박스: <b>${escapeHtml(currentBoxName)}</b>, 뽑기 횟수 N = ${N}`;
+      if (ranSimulation) {
+        html += `, 시뮬레이션 횟수 M = ${M}</p>`;
+      } else {
+        html += `, 시뮬레이션 없음(M = 0)</p>`;
+      }
+
+      html += "<table><thead><tr>";
+      html += "<th>아이템 이름</th>";
+      html += "<th>입력값(가중치)</th>";
+      html += "<th>1회 확률 p</th>";
+      html += "<th>N회 기대 개수 E[#](이론)</th>";
+      if (ranSimulation) {
+        html += "<th>N회 기대 개수 E[#](시뮬)</th>";
+      }
+      html += "<th>N회 1개 이상 등장 확률 P(≥1)(이론)</th>";
+      if (ranSimulation) {
+        html += "<th>N회 1개 이상 등장 확률 P(≥1)(시뮬)</th>";
+      }
+      html += "</tr></thead><tbody>";
+
+      for (const s of stats) {
+        html += "<tr>";
+        html += `<td>${escapeHtml(s.name)}</td>`;
+        html += `<td>${s.weight.toFixed(4)}</td>`;
+        html += `<td>${(s.p * 100).toFixed(4)}%</td>`;
+        html += `<td>${s.expectedCountTheo.toFixed(4)}</td>`;
+        if (ranSimulation) {
+          html += `<td>${s.expectedCountSim.toFixed(4)}</td>`;
+        }
+        html += `<td>${(s.probAtLeastOneTheo * 100).toFixed(4)}%</td>`;
+        if (ranSimulation) {
+          html += `<td>${(s.probAtLeastOneSim * 100).toFixed(4)}%</td>`;
+        }
+        html += "</tr>";
+      }
+
+      html += "</tbody></table>";
+
+      html += `
+        <p class="info">
+          - 이론 계산식: 각 아이템의 1회 확률을 p라 할 때<br>
+          &nbsp;&nbsp;• N회 기대 개수 E[#] = N · p<br>
+          &nbsp;&nbsp;• N회 1개 이상 등장 확률 P(≥1) = 1 − (1 − p)<sup>N</sup><br>
+          - 시뮬레이션: 동일 분포로 랜덤 뽑기를 M번 반복해서 얻은 경험적 결과입니다.
+        </p>
+        <div id="chartContainer"></div>
+      `;
+
+      resultArea.innerHTML = html;
+
+      // 그래프 그리기
+      if (ranSimulation) {
+        drawSimulationChart(stats);
+      } else {
+        if (simChart) {
+          simChart.destroy();
+          simChart = null;
+        }
+      }
+    }
+
+    // ---------------------------
+    // 시뮬레이션 로직
+    // ---------------------------
+    function runSimulation(stats, N, M) {
+      const itemCount = stats.length;
+      const cumulative = [];
+      let sum = 0;
+      for (let i = 0; i < itemCount; i++) {
+        sum += stats[i].p;
+        cumulative[i] = sum;
+      }
+
+      const totalCounts = new Array(itemCount).fill(0);
+      const appearTrialCounts = new Array(itemCount).fill(0);
+
+      for (let t = 0; t < M; t++) {
+        const trialCounts = new Array(itemCount).fill(0);
+
+        for (let d = 0; d < N; d++) {
+          const r = Math.random();
+          let idx = 0;
+          while (idx < itemCount && r > cumulative[idx]) {
+            idx++;
+          }
+          if (idx >= itemCount) idx = itemCount - 1;
+          trialCounts[idx]++;
+        }
+
+        for (let i = 0; i < itemCount; i++) {
+          totalCounts[i] += trialCounts[i];
+          if (trialCounts[i] > 0) {
+            appearTrialCounts[i]++;
+          }
+        }
+      }
+
+      for (let i = 0; i < itemCount; i++) {
+        stats[i].expectedCountSim = totalCounts[i] / M;
+        stats[i].probAtLeastOneSim = appearTrialCounts[i] / M;
+      }
+    }
+
+    // ---------------------------
+    // Chart.js 그래프
+    // ---------------------------
+    function drawSimulationChart(stats) {
+      const container = document.getElementById("chartContainer");
+      if (!container) return;
+
+      container.innerHTML = '<canvas id="simChart" height="200"></canvas>';
+      const ctx = document.getElementById("simChart").getContext("2d");
+
+      const labels = stats.map(s => s.name);
+      const theoretical = stats.map(s => s.probAtLeastOneTheo * 100);
+      const simulated = stats.map(s => s.probAtLeastOneSim * 100);
+
+      if (simChart) {
+        simChart.destroy();
+      }
+
+      simChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "이론 P(≥1) %",
+              data: theoretical
+            },
+            {
+              label: "시뮬레이션 P(≥1) %",
+              data: simulated
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              position: "top"
+            },
+            title: {
+              display: true,
+              text: "아이템별 1개 이상 등장 확률 (이론 vs 시뮬레이션)"
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return value + "%";
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
