@@ -1,0 +1,8 @@
+{
+  "name": "gacha-prob-insight",
+  "private": true,
+  "description": "가챠/랜덤박스 확률 분석 및 기획서 대조 검증 도구",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
